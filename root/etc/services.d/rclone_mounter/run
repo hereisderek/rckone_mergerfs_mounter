@@ -1,20 +1,74 @@
 #!/usr/bin/with-contenv bash
 set -x
 
+XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-/config}
+DOCKER_RCLONE_CONFIG_DIR=${XDG_CONFIG_HOME}/rclone
+DOCKER_RCLONE_CONFIG_FILE=${DOCKER_RCLONE_CONFIG_DIR}/${RCLONE_CONFIG_FILE_NAME:-rclone.conf}
+IS_INTERACTIVE=0; [[ -t 0 && -t 1 ]] && IS_INTERACTIVE=1
+RCLONE_RC_ACTUAL_AUTH=${RCLONE_RC_AUTH:-"--rc-no-auth"}
+
+DOCKER_MERGERFS_MOUNT_POINT=/merged
+DOCKER_RCLONE_MOUNT_POINT=/rclone
+
+[[ -z "$RCLONE_REMOTE" ]] && { 
+    echo "RCLONE_REMOTE is not set, aborting..."
+    exit 1 
+}
+
 
 _term() {
-  echo "Caught SIGTERM signal!"
-  wg-quick down wg0
+    echo "Caught SIGTERM signal! unmounting..."
+    mount_points="${DOCKER_MERGERFS_MOUNT_POINT} ${DOCKER_RCLONE_MOUNT_POINT}"
+    
+    for mount in ${mount_points}; do 
+        fusermount -uz $mount || :
+    done
 }
 
 trap _term SIGTERM
 
-trap _term SIGTERM
+rclone_config() {
+    [[ -z "$RCLONE_REMOTE" ]] && { 
+        echo "RCLONE_REMOTE is not set, aborting..."
+        exit 1 
+    }
 
-echo "running"
+    if [ ! -f $DOCKER_RCLONE_CONFIG_FILE ]; then 
+        echo "config file doesn't exit, please copy to ${DOCKER_RCLONE_CONFIG_FILE} if the directory is mounted, otherwise will start creating it."
+        read -n 1 -t 5
+        if [ ! -f $DOCKER_RCLONE_CONFIG_FILE ]; then 
+            if [[ $IS_INTERACTIVE = 1 ]]; then 
+                rclone config
+                [[ -z "$RCLONE_REMOTE" ]] && exit 1
+            else 
+                return 1
+            fi
+        else 
+            return 0
+        fi
+    fi
+}
+
+rclone_rcd() {
+    rclone rcd ${RCLONE_RC_ACTUAL_AUTH} ${RCLONE_DEFAULT_PARAMS} ${RCLONE_EXTRA_PARAMS} &
+    sleep 3
+    rclone rc $RCLONE_RC_AUTH options/set --json $RCLONE_RC_OPTION_SET_JSON
+    rclone rc $RCLONE_RC_AUTH mount/mount fs="${RCLONE_REMOTE}:" mountPoint=${DOCKER_RCLONE_MOUNT_POINT}
+}
+
+mount_mergerfs() {
+    mergerfs /storage:${DOCKER_RCLONE_MOUNT_POINT} ${DOCKER_MERGERFS_MOUNT_POINT} -o ${MERGERFS_MOUNT_OPTIONS}
+}
+
 env
+rclone_config
+[[ $? = 0 ]] || {
+    echo "config file not found, aborting..."
+    exit 1
+}
 
-
-sleep infinity &
+mkdir -p ${DOCKER_RCLONE_MOUNT_POINT} ${DOCKER_MERGERFS_MOUNT_POINT}
+rclone_rcd
+mount_mergerfs
 
 wait

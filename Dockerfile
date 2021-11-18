@@ -1,53 +1,33 @@
-FROM alpine as builder
-
-LABEL build_version="Version:- RClone:${RCLONE_VER} Mergerfs:${MERGERFS_VER} Build-date:- ${BUILD_DATE}"
-LABEL maintainer="Derek <1and1get2@gmail.com>"
-
-# MERGERFS_VER=c06db9c3a04effca67f2ed88fdaabc65a4da1d05
-# MERGERFS_VER=nightly  
-
-ARG RCLONE_VER=1.57.0 \
-    BUILD_DATE=20200617T131603 \
-    BASE_OS=linux ARCH=amd64 
-
-ENV MERGERFS_VER=${MERGERFS_VER}
-
-WORKDIR /tmp
-
-
-RUN apk add --no-cache fuse libattr libstdc++ autoconf automake libtool gettext-dev attr-dev linux-headers make build-base git unzip curl 
-
-RUN if [[ "$RCLONE_VER" = "beta" ]]; then \
-        curl "https://beta.rclone.org/rclone-beta-latest-${BASE_OS}-${ARCH}.zip" -o rclone.zip; \
-    elif [[ "$RCLONE_VER" = "latest" ]]; then \
-        curl "https://downloads.rclone.org/rclone-current-${BASE_OS}-${ARCH}.zip" -o rclone.zip; \
-    else \
-        curl "https://downloads.rclone.org/v${RCLONE_VER}/rclone-v${RCLONE_VER}-${BASE_OS}-${ARCH}.zip" -o rclone.zip; \
-    fi; unzip rclone.zip && cd rclone-*-linux-${ARCH} && cp rclone /usr/bin && chmod a+x /usr/bin/rclone
-    
-
-# install mergerfs
-# RUN git clone  -–depth=1 -n https://github.com/trapexit/mergerfs.git /mergerfs && cd /mergerfs && \
-#     git checkout ${MERGERFS_VER} && \
-#     make STATIC=1 LTO=1 && make install
-
-FROM hotio/mergerfs:nightly as mergerfs_builder
-
-
+FROM rclone/rclone:beta as rclone
+FROM hotio/mergerfs:nightly as mergerfs
 FROM alpine
 
-# RUN apk add --no-cache --update ca-certificates fuse fuse-dev unzip curl libattr libstdc++ 
-RUN apk add --no-cache --update ca-certificates fuse fuse-dev unzip curl
+LABEL maintainer="Derek <1and1get2@gmail.com>"
 
-
-ADD https://github.com/just-containers/s6-overlay/releases/latest/download/s6-overlay-amd64.tar.gz /tmp/
-RUN tar xzf /tmp/s6-overlay-amd64.tar.gz -C /
-
-COPY --from=builder /usr/bin/rclone  /usr/bin/rclone
-COPY --from=mergerfs_builder /usr/local/bin/mergerfs /usr/local/bin/mergerfs
-COPY --from=mergerfs_builder /usr/local/bin/mergerfs-fusermount /usr/local/bin/mergerfs-fusermount
-COPY --from=mergerfs_builder /sbin/mount.mergerfs /sbin/mount.mergerfs
+COPY --from=rclone /usr/local/bin/rclone  /usr/local/bin/rclone
+COPY --from=mergerfs /usr/local/bin/mergerfs /usr/local/bin/mergerfs
+COPY --from=mergerfs /usr/local/bin/mergerfs-fusermount /usr/local/bin/mergerfs-fusermount
+COPY --from=mergerfs /sbin/mount.mergerfs /sbin/mount.mergerfs
 
 ADD root /
+
+RUN apk add --no-cache --update ca-certificates fuse fuse-dev libattr libstdc++ unzip curl bash tzdata
+
+ADD https://github.com/just-containers/s6-overlay/releases/latest/download/s6-overlay-amd64-installer /tmp/
+RUN chmod a+x /tmp/s6-overlay-amd64-installer && /tmp/s6-overlay-amd64-installer /
+
 EXPOSE 5572
 ENTRYPOINT ["/init"]
+
+ENV PGID= PUID= \
+    RCLONE_DEFAULT_PARAMS="--rc-web-gui --rc-addr=:5572 --rc-serve --rc-web-gui-no-open-browser --use-mmap --fast-list --track-renames --tpslimit-burst 3 --track-renames-strategy modtime,leaf --transfers 8 --rc-web-gui-update --cache-dir /cache --cache-db-purge --drive-stop-on-upload-limit " \
+    RCLONE_EXTRA_PARAMS= \
+    RCLONE_RC_AUTH= \
+    XDG_CONFIG_HOME=/config \
+    RCLONE_CONFIG_FILE_NAME="rclone.conf" \
+    RCLONE_REMOTE= \
+    RCLONE_RC_OPTION_SET_JSON='{"main":{"DisableHTTP2":true,"BufferSize":16777216},"vfs":{"CacheMode":3,"Umask":0,"CacheMaxAge":21600000000000,"ReadAhead":67108864,"NoModTime":true,"NoChecksum":true,"WriteBack":300000000000,"CaseInsensitive":true},"mount":{"AllowNonEmpty":false,"AllowOther":true,"AsyncRead":true,"WritebackCache":true,"MaxReadAhead":524288}}'
+
+ENV MERGERFS_MOUNT_OPTIONS="rw,use_ino,allow_other,func.getattr=newest,category.action=all,category.create=ff,cache.files=auto-full"
+
+VOLUME [ "/cache", "/config", "/mnt", "/storage" ]
