@@ -1,14 +1,9 @@
 #!/usr/bin/with-contenv bash
+echo "=============================== ENV ==============================="
+env
+echo "******************************* ENV *******************************"
+
 set -x
-
-XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-/config}
-DOCKER_RCLONE_CONFIG_DIR=${XDG_CONFIG_HOME}/rclone
-DOCKER_RCLONE_CONFIG_FILE=${DOCKER_RCLONE_CONFIG_DIR}/${RCLONE_CONFIG_FILE_NAME:-rclone.conf}
-IS_INTERACTIVE=0; [[ -t 0 && -t 1 ]] && IS_INTERACTIVE=1
-RCLONE_RC_ACTUAL_AUTH=${RCLONE_RC_AUTH:-"--rc-no-auth"}
-
-DOCKER_MERGERFS_MOUNT_POINT=/merged
-DOCKER_RCLONE_MOUNT_POINT=/rclone
 
 [[ -z "$RCLONE_REMOTE" ]] && { 
     echo "RCLONE_REMOTE is not set, aborting..."
@@ -16,9 +11,66 @@ DOCKER_RCLONE_MOUNT_POINT=/rclone
 }
 
 
+UMASK=${UMASK:-0}
+XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-/config}
+DOCKER_RCLONE_CONFIG_DIR=${XDG_CONFIG_HOME}/rclone
+DOCKER_RCLONE_CONFIG_FILE=${DOCKER_RCLONE_CONFIG_DIR}/${RCLONE_CONFIG_FILE_NAME:-rclone.conf}
+RCLONE_EXCLUDE_FILE_NAME="exclude.txt"
+DOCKER_RCLONE_EXCLUDE_FILE=${DOCKER_RCLONE_CONFIG_DIR}/${RCLONE_EXCLUDE_FILE_NAME}
+IS_INTERACTIVE=0; [[ -t 0 && -t 1 ]] && IS_INTERACTIVE=1
+
+_rc_web_gui_=; [[ ${RC_WEB_GUI} == true ]] && _rc_web_gui_="--rc-web-gui --rc-web-gui-update"
+_rc_serve_=; [[ ${RC_SERVE} == true ]] && _rc_serve_="--rc-serve"
+_rc_enable_metrics_=; [[ ${RC_ENABLE_METRICS} == true ]] && _rc_enable_metrics_="--rc-enable-metrics"
+_rc_addr_="--rc-addr=${RCLONE_IP_PORT:-":7752"}"
+_exclude_=; [[ -f ${DOCKER_RCLONE_EXCLUDE_FILE} ]] && _exclude_="--exclude-from ${DOCKER_RCLONE_EXCLUDE_FILE}"
+
+if [ -z ${RC_USER} ] && [ -z ${RC_PASS} ]; then
+    _rc_auth_="--rc-no-auth"
+else 
+    _rc_auth_="--rc-user=${RC_USER} --rc-pass=${RC_PASS}"
+fi
+
+PARAMS_RC="${_rc_addr_} ${_rc_web_gui_} ${_rc_serve_} ${_rc_enable_metrics_} ${_rc_auth_}  --rc-web-gui-no-open-browser "
+
+# see
+# https://github.com/animosity22/homescripts/blob/master/systemd/rclone-drive.service
+
+# --cache-db-purge
+# Global flags: https://rclone.org/flags/ 
+# --crypt-server-side-across-configs
+# --checkers 8 --drive-pacer-min-sleep 50ms --drive-pacer-burst 200
+PARAMS_COMMON="\
+    --use-mmap --user-agent derek_rclone --tpslimit-burst 3 --size-only \
+    --drive-stop-on-download-limit  --drive-stop-on-upload-limit --drive-acknowledge-abuse \
+    --track-renames --track-renames-strategy modtime,leaf --buffer-size=64M ${_exclude_} ${PARAMS_COMMON_EXTRA}"
+
+# --poll-interval duration: Time to wait between polling for changes, must be smaller than dir-cache-time and only on supported remotes (set 0 to disable) (default 1m0s)
+# --dir-cache-time duration: Time to cache directory entries for (default 5m0s)
+
+# --file-perms=0666 --dir-perms=0777
+PARAMS_MOUNT="--allow-other --allow-non-empty --uid ${PUID} --gid ${PGID} --umask ${UMASK} \
+    --dir-cache-time 4380h --poll-interval 30s \
+    --noappledouble  --noapplexattr  "
+
+# --no-modtime --no-checksum  
+PARAMS_VFS="\
+--cache-dir /cache --vfs-cache-mode full  --vfs-case-insensitive=true  \
+--vfs-cache-mode full --vfs-read-chunk-size 64M --vfs-read-chunk-size-limit 512M   \
+--vfs-cache-max-size 300G --vfs-cache-poll-interval 5m --vfs-read-ahead 2G --attr-timeout 20s --transfers 6 "
+
+RCLONE_MOUNT_NAME=${RCLONE_MOUNT_NAME:-${RCLONE_REMOTE}}
+MERGERFS_MOUNT_NAME=${MERGERFS_MOUNT_NAME:-"${RCLONE_MOUNT_NAME}_merged"}
+
+RCLONE_MOUNT_POINT=$RCLONE_MOUNT_NAME; [[ ! "$RCLONE_MOUNT_NAME" = /* ]] && RCLONE_MOUNT_POINT=$(realpath -s "/mnt/$RCLONE_MOUNT_NAME")
+MERGERFS_MOUNT_POINT=$MERGERFS_MOUNT_NAME; [[ ! "$MERGERFS_MOUNT_NAME" = /* ]] && MERGERFS_MOUNT_POINT=$(realpath -s "/mnt/$MERGERFS_MOUNT_NAME")
+
+
+echo "RCLONE_MOUNT_POINT:$RCLONE_MOUNT_POINT MERGERFS_MOUNT_POINT:$MERGERFS_MOUNT_POINT"
+
 _term() {
     echo "Caught SIGTERM signal! unmounting..."
-    mount_points="${DOCKER_MERGERFS_MOUNT_POINT} ${DOCKER_RCLONE_MOUNT_POINT}"
+    mount_points="${MERGERFS_MOUNT_POINT} ${RCLONE_MOUNT_POINT}"
     
     for mount in ${mount_points}; do 
         fusermount -uz $mount || :
@@ -49,26 +101,50 @@ rclone_config() {
     fi
 }
 
+rclone_rcd_refresh() {
+    rclone rc $_rc_auth_ vfs/refresh recursive=true ${_rc_addr_} _async=true
+}
+
 rclone_rcd() {
-    rclone rcd ${RCLONE_RC_ACTUAL_AUTH} ${RCLONE_DEFAULT_PARAMS} ${RCLONE_EXTRA_PARAMS} &
+    echo "launching rcd..."
+    rclone rcd --config=${DOCKER_RCLONE_CONFIG_FILE} ${PARAMS_COMMON} ${PARAMS_RC} &
     sleep 3
-    rclone rc $RCLONE_RC_AUTH options/set --json $RCLONE_RC_OPTION_SET_JSON
-    rclone rc $RCLONE_RC_AUTH mount/mount fs="${RCLONE_REMOTE}:" mountPoint=${DOCKER_RCLONE_MOUNT_POINT}
+    rclone rc $_rc_auth_ options/set --json $RCLONE_RC_OPTION_SET_JSON
+    rclone rc $_rc_auth_ options/set --json '{"vfs": {"Umask":"'${UMASK}'", "GID":"'$PGID'", "UID":"'${PUID}'"}}'
+    rclone rc $_rc_auth_ mount/mount fs="${RCLONE_REMOTE}:" mountPoint=${RCLONE_MOUNT_POINT} vfsOpt='{"CacheMode": 3}' mountOpt='{"AllowOther": true}'
+}
+
+rclone_mount() {
+    echo "mounting with rc on..."
+    rclone --config=${DOCKER_RCLONE_CONFIG_FILE} ${PARAMS_COMMON}  \
+    mount ${RCLONE_REMOTE}:${RCLONE_REMOTE_PATH} ${RCLONE_MOUNT_POINT}  \
+    ${PARAMS_MOUNT} ${PARAMS_VFS} --rc  ${PARAMS_RC} &
 }
 
 mount_mergerfs() {
-    mergerfs /storage:${DOCKER_RCLONE_MOUNT_POINT} ${DOCKER_MERGERFS_MOUNT_POINT} -o ${MERGERFS_MOUNT_OPTIONS}
+    mergerfs /storage:${RCLONE_MOUNT_POINT}/${MERGERFS_MOUNT_RCLONE_PATH} ${MERGERFS_MOUNT_POINT} -o ${MERGERFS_MOUNT_OPTIONS}
 }
 
-env
+
+[[ -z "$RCLONE_REMOTE" ]] && { 
+    echo "RCLONE_REMOTE is not set, aborting..."
+    exit 1 
+}
+
+_term # clean up mount points before we start
+
 rclone_config
 [[ $? = 0 ]] || {
     echo "config file not found, aborting..."
     exit 1
 }
 
-mkdir -p ${DOCKER_RCLONE_MOUNT_POINT} ${DOCKER_MERGERFS_MOUNT_POINT}
-rclone_rcd
+mkdir -p ${RCLONE_MOUNT_POINT} ${MERGERFS_MOUNT_POINT}
+if [[ ${USE_RCD} == true ]]; then rclone_rcd; else rclone_mount; fi
+
 mount_mergerfs
+
+sleep 3
+rclone_rcd_refresh
 
 wait

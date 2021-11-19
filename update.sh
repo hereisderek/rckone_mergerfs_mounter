@@ -20,7 +20,7 @@ get_mergerfs_version() {
     old_mergerfs_version=$(jq -r '.version' < MERGERFS_VERSION.json)
     changelog=$(jq -r '.changelog' < MERGERFS_VERSION.json)
     [[ "${old_mergerfs_version}" != "${mergerfs_version}" ]] && changelog="https://github.com/trapexit/mergerfs/compare/${old_mergerfs_version}...${mergerfs_version}"
-    echo '{"version":"'"${mergerfs_version}"'","changelog":"'"${changelog}"'"}' | jq . > MERGERFS_VERSION.json
+    echo '{"mergerfs_version":"'"${mergerfs_version}"'","changelog":"'"${changelog}"'"}' | jq . > MERGERFS_VERSION.json
 }
 
 get_rclone_version() {
