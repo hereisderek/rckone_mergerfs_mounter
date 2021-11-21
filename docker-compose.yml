@@ -1,18 +1,18 @@
 version: "3.7"
 services:
   rclone_mount:
-    image: hereisderek/rclone_mergerfs_mounter:latest
-    # build:
-    #   context: .
+    image: hereisderek/rclone_mergerfs_mounter:nightly
+    build:
+      context: .
     container_name: rclone_mount
-    network_mode: bridge
     privileged: true
     security_opt:
       - seccomp:unconfined
     devices:
       - /dev/fuse:/dev/fuse
     ports:
-      - 5573:5572
+      - 5572:5572
+      - 7879:7879
     cap_add:
       - SYS_ADMIN
       - SETPCAP
@@ -24,15 +24,12 @@ services:
       - RC_USER=admin
       - RC_PASS=admin
       - RCLONE_REMOTE=remote01
-      - USE_RCD=false #USE_RCD=true isn't working for now
-      - RCLONE_EXTRA_PARAMS=-vv # optional
-      - RCLONE_CONFIG_FILE_NAME=rclone.conf # optional
-      - RC_SERVE=true # optional
-      - RC_ENABLE_METRICS=true # optional
-      - RCLONE_IP_PORT=:5572 # optional
+      - PARAMS_COMMON_EXTRA=-vv
+      - RC_WEB_GUI=true
 
     volumes:
-      - ~/.config/rclone:/config/rclone
+      - /etc/localtime:/etc/localtime:ro
+      - config/rclone:/config/rclone
       - /path/to/your/rclone/cache:/cache
       - /path/to/your/local/mergerfs:/storage
       # shared modifier is required to see the mounts on the host

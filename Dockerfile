@@ -16,18 +16,17 @@ RUN apk add --no-cache --update ca-certificates fuse fuse-dev libattr libstdc++ 
 ADD https://github.com/just-containers/s6-overlay/releases/latest/download/s6-overlay-amd64-installer /tmp/
 RUN chmod a+x /tmp/s6-overlay-amd64-installer && /tmp/s6-overlay-amd64-installer /
 
-EXPOSE 5572
+EXPOSE 5572 7879
 ENTRYPOINT ["/init"]
 
-ENV PGID= PUID= \
-    PARAMS_COMMON_EXTRA= \
-    XDG_CONFIG_HOME=/config \
-    RCLONE_CONFIG_FILE_NAME="rclone.conf" USE_RCD=false \
-    RCLONE_REMOTE= RCLONE_REMOTE_PATH=/ \
-    RCLONE_MOUNT_NAME=rclone MERGERFS_MOUNT_NAME=merged \
-    RC_USER= RC_PASS= RCLONE_IP_PORT=:5572 RC_SERVE=false RC_ENABLE_METRICS=false RC_WEB_GUI=true RC_WEB_GUI_UPDATE=true \
-    RCLONE_RC_OPTION_SET_JSON='{"main":{"BufferSize":16777216},"vfs":{"CacheMode":3,"Umask":0,"CacheMaxAge":21600000000000,"ReadAhead":67108864,"NoModTime":true,"NoChecksum":true,"WriteBack":300000000000,"CaseInsensitive":true},"mount":{"AllowNonEmpty":false,"AllowOther":true,"AsyncRead":true,"WritebackCache":true,"MaxReadAhead":524288}}' \
-    MERGERFS_MOUNT_RCLONE_PATH= \
-    MERGERFS_MOUNT_OPTIONS="rw,use_ino,cache.files=partial,dropcacheonclose=true,allow_other,func.getattr=newest,category.action=all,category.create=ff,cache.files=auto-full"
+ENV PGID=0 PUID=0 UMASK=0 RCLONE_REMOTE= RCLONE_REMOTE_PATH=  \
+    RCLONE_CONFIG_DIR="/config/rclone" RCLONE_CONFIG_FILE_NAME="rclone.conf" RCLONE_EXCLUDE_FILE_NAME="exclude.txt" \
+    RC_WEB_GUI=false RC_SERVE=false RC_ENABLE_METRICS=false RC_ADDR=":5572" RC_EXTRA= OVERRIDE_RC_PARAMS= \
+    RC_USER=admin RC_PASS=admin RC_AUTH= \
+    RCLONE_GLOBAL_PARAMS_EXTRA= OVERRIDE_RCLONE_GLOBAL_PARAMS= \
+    RCLONE_MOUNT_PARAMS_EXTRA= OVERRIDE_RCLONE_MOUNT_PARAMS= \
+    RCLONE_VFS_PARAMS_EXTRA= OVERRIDE_RCLONE_VFS_PARAMS= \
+    RCLONE_MOUNT_NAME= MERGERFS_MOUNT_NAME= MERGERFS_MOUNT_OPTIONS="rw,use_ino,cache.files=partial,dropcacheonclose=true,allow_other,func.getattr=newest,category.action=all,category.create=ff,cache.files=auto-full" \
+    MERGERFS_MOUNT_RCLONE_PATH= OVERRIDE_MERGERFS_COMMAND_PARAMTERS=
 
 VOLUME [ "/cache", "/storage", "/config/rclone", "/mnt" ]

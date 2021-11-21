@@ -3,78 +3,125 @@ echo "=============================== ENV ==============================="
 env
 echo "******************************* ENV *******************************"
 
-set -x
+set +e
 
 [[ -z "$RCLONE_REMOTE" ]] && { 
     echo "RCLONE_REMOTE is not set, aborting..."
     exit 1 
 }
 
+UMASK=${UMASK:-0};PGID=${PGID:-0};PUID=${PUID:-0}
+RCLONE_EXCLUDE_FILE_NAME=${RCLONE_EXCLUDE_FILE_NAME:-exclude.txt}
+RCLONE_IP_PORT=${RCLONE_IP_PORT:-"localhost:5572"}
 
-UMASK=${UMASK:-0}
-XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-/config}
-DOCKER_RCLONE_CONFIG_DIR=${XDG_CONFIG_HOME}/rclone
-DOCKER_RCLONE_CONFIG_FILE=${DOCKER_RCLONE_CONFIG_DIR}/${RCLONE_CONFIG_FILE_NAME:-rclone.conf}
-RCLONE_EXCLUDE_FILE_NAME="exclude.txt"
-DOCKER_RCLONE_EXCLUDE_FILE=${DOCKER_RCLONE_CONFIG_DIR}/${RCLONE_EXCLUDE_FILE_NAME}
 IS_INTERACTIVE=0; [[ -t 0 && -t 1 ]] && IS_INTERACTIVE=1
 
-_rc_web_gui_=; [[ ${RC_WEB_GUI} == true ]] && _rc_web_gui_="--rc-web-gui --rc-web-gui-update"
-_rc_serve_=; [[ ${RC_SERVE} == true ]] && _rc_serve_="--rc-serve"
-_rc_enable_metrics_=; [[ ${RC_ENABLE_METRICS} == true ]] && _rc_enable_metrics_="--rc-enable-metrics"
-_rc_addr_="--rc-addr=${RCLONE_IP_PORT:-":7752"}"
-_exclude_=; [[ -f ${DOCKER_RCLONE_EXCLUDE_FILE} ]] && _exclude_="--exclude-from ${DOCKER_RCLONE_EXCLUDE_FILE}"
+config_file=${RCLONE_CONFIG_DIR}/${RCLONE_CONFIG_FILE_NAME}
+[[ -f ${config_file} ]]||config_file=${RCLONE_CONFIG}
+config_file_param=;[[ -f ${config_file} ]]&&config_file_param="--config=${config_file}"
 
-if [ -z ${RC_USER} ] && [ -z ${RC_PASS} ]; then
-    _rc_auth_="--rc-no-auth"
-else 
-    _rc_auth_="--rc-user=${RC_USER} --rc-pass=${RC_PASS}"
+exclude_file=${RCLONE_CONFIG_DIR}/${RCLONE_EXCLUDE_FILE_NAME}
+[[ -f ${exclude_file} ]]||exclude_file="$(dirname $config_file)/${RCLONE_EXCLUDE_FILE_NAME}"
+exclude_file_param=;[[ -f ${exclude_file} ]]&&exclude_file_param="--exclude-from=${exclude_file}"
+
+
+# RC Params
+PARAMS_RC=
+if [ -z ${OVERRIDE_RC_PARAMS} ]; then 
+    rc_addr_param=;[[ ! -z ${RC_ADDR} ]]&&rc_addr_param="--rc-addr=${RC_ADDR}"
+    rc_enable_metrics_param=; [[ ${RC_ENABLE_METRICS} == true ]] && rc_enable_metrics_param="--rc-enable-metrics"
+    rc_serve_param=; [[ ${RC_SERVE} == true ]] && rc_serve_param="--rc-serve"
+    rc_web_gui_param=;[[ ${RC_WEB_GUI} == true ]]&&rc_web_gui_param="--rc-web-gui --rc-web-gui-update"
+
+    rc_auth=
+    if [ ! -z $RC_AUTH ]; then
+        rc_auth=${RC_AUTH}
+    elif [ -z ${RC_USER} ] && [ -z ${RC_PASS} ]; then
+        rc_auth="--rc-no-auth"
+    else 
+        rc_auth="--rc-user=${RC_USER} --rc-pass=${RC_PASS}"
+    fi
+    PARAMS_RC="${rc_auth} ${rc_addr_param} ${rc_enable_metrics_param} ${rc_serve_param} ${rc_web_gui_param} --rc-web-gui-no-open-browser ${RC_EXTRA}"
+else
+    PARAMS_RC=${OVERRIDE_RC_PARAMS}
 fi
 
-PARAMS_RC="${_rc_addr_} ${_rc_web_gui_} ${_rc_serve_} ${_rc_enable_metrics_} ${_rc_auth_}  --rc-web-gui-no-open-browser "
+echo "PARAMS_RC:$PARAMS_RC"
 
-# see
-# https://github.com/animosity22/homescripts/blob/master/systemd/rclone-drive.service
-
-# --cache-db-purge
 # Global flags: https://rclone.org/flags/ 
-# --crypt-server-side-across-configs
-# --checkers 8 --drive-pacer-min-sleep 50ms --drive-pacer-burst 200
-PARAMS_COMMON="\
-    --use-mmap --user-agent derek_rclone --tpslimit-burst 3 --size-only \
-    --drive-stop-on-download-limit  --drive-stop-on-upload-limit --drive-acknowledge-abuse \
-    --track-renames --track-renames-strategy modtime,leaf --buffer-size=64M ${_exclude_} ${PARAMS_COMMON_EXTRA}"
+PARAMS_GLOBAL=
+if [ -z $OVERRIDE_RCLONE_GLOBAL_PARAMS ]; then
+    # --cache-db-purge
+    # --crypt-server-side-across-configs
+    # --checkers 8 --drive-pacer-min-sleep 50ms --drive-pacer-burst 200
+    # https://github.com/animosity22/homescripts/blob/master/systemd/rclone-drive.service
+    PARAMS_GLOBAL="--use-mmap --user-agent rclone_mounte --tpslimit-burst 3 --size-only --no-update-modtime \
+--drive-stop-on-download-limit  --drive-stop-on-upload-limit --drive-acknowledge-abuse --temp-dir /cache \
+--track-renames --track-renames-strategy modtime,leaf --buffer-size=64M --progress --human-readable \
+${exclude_file_param} ${RCLONE_GLOBAL_PARAMS_EXTRA}"
+else 
+    PARAMS_GLOBAL=$OVERRIDE_RCLONE_GLOBAL_PARAMS
+fi
 
-# --poll-interval duration: Time to wait between polling for changes, must be smaller than dir-cache-time and only on supported remotes (set 0 to disable) (default 1m0s)
-# --dir-cache-time duration: Time to cache directory entries for (default 5m0s)
+# MOUNTS: https://rclone.org/commands/rclone_mount/
 
-# --file-perms=0666 --dir-perms=0777
-PARAMS_MOUNT="--allow-other --allow-non-empty --uid ${PUID} --gid ${PGID} --umask ${UMASK} \
-    --dir-cache-time 4380h --poll-interval 30s \
-    --noappledouble  --noapplexattr  "
-
-# --no-modtime --no-checksum  
-PARAMS_VFS="\
---cache-dir /cache --vfs-cache-mode full  --vfs-case-insensitive=true  \
---vfs-cache-mode full --vfs-read-chunk-size 64M --vfs-read-chunk-size-limit 512M   \
---vfs-cache-max-size 300G --vfs-cache-poll-interval 5m --vfs-read-ahead 2G --attr-timeout 20s --transfers 6 "
-
-RCLONE_MOUNT_NAME=${RCLONE_MOUNT_NAME:-${RCLONE_REMOTE}}
-MERGERFS_MOUNT_NAME=${MERGERFS_MOUNT_NAME:-"${RCLONE_MOUNT_NAME}_merged"}
-
-RCLONE_MOUNT_POINT=$RCLONE_MOUNT_NAME; [[ ! "$RCLONE_MOUNT_NAME" = /* ]] && RCLONE_MOUNT_POINT=$(realpath -s "/mnt/$RCLONE_MOUNT_NAME")
-MERGERFS_MOUNT_POINT=$MERGERFS_MOUNT_NAME; [[ ! "$MERGERFS_MOUNT_NAME" = /* ]] && MERGERFS_MOUNT_POINT=$(realpath -s "/mnt/$MERGERFS_MOUNT_NAME")
+PARAMS_MOUNT=
+if [ -z ${OVERRIDE_RCLONE_MOUNT_PARAMS} ]; then
+    # --no-modtime --no-checksum  
+    # --poll-interval duration: Time to wait between polling for changes, must be smaller than dir-cache-time and only on supported remotes (set 0 to disable) (default 1m0s)
+    # --dir-cache-time duration: Time to cache directory entries for (default 5m0s)
+    # --file-perms=0666 --dir-perms=0777
+    PARAMS_MOUNT="--allow-other --allow-non-empty --allow-root --async-read --uid ${PUID} --gid ${PGID} --umask ${UMASK} \
+--vfs-write-back 30s --dir-cache-time 4380h --poll-interval 30s --noappledouble  --noapplexattr ${RCLONE_MOUNT_PARAMS_EXTRA}"
+else
+    PARAMS_MOUNT=${OVERRIDE_RCLONE_MOUNT_PARAMS}
+fi
 
 
-echo "RCLONE_MOUNT_POINT:$RCLONE_MOUNT_POINT MERGERFS_MOUNT_POINT:$MERGERFS_MOUNT_POINT"
+PARAMS_VFS=
+if [ -z ${OVERRIDE_RCLONE_VFS_PARAMS} ]; then
+    PARAMS_VFS=" --cache-dir /cache --vfs-cache-mode full  --vfs-case-insensitive=true \
+--vfs-cache-mode full --vfs-read-chunk-size 64M --vfs-read-chunk-size-limit 512M \
+--vfs-cache-max-size 300G --vfs-cache-poll-interval 5m --vfs-read-ahead 2G --attr-timeout 20s --transfers 6 ${RCLONE_VFS_PARAMS_EXTRA}"
+else
+    PARAMS_VFS=${OVERRIDE_RCLONE_VFS_PARAMS}
+fi
 
-_term() {
-    echo "Caught SIGTERM signal! unmounting..."
+
+MERGERFS_PARAMS=
+if [ -z $OVERRIDE_MERGERFS_COMMAND_PARAMTERS ]; then
+    [[ -z ${RCLONE_MOUNT_NAME} ]]&&RCLONE_MOUNT_NAME=${RCLONE_REMOTE}
+    [[ -z ${MERGERFS_MOUNT_NAME} ]]&&MERGERFS_MOUNT_NAME="${RCLONE_MOUNT_NAME}_merged"
+
+    RCLONE_MOUNT_POINT=$RCLONE_MOUNT_NAME; [[ ! "$RCLONE_MOUNT_NAME" = /* ]] && RCLONE_MOUNT_POINT=$(realpath -m "/mnt/$RCLONE_MOUNT_NAME")
+    MERGERFS_MOUNT_POINT=$MERGERFS_MOUNT_NAME; [[ ! "$MERGERFS_MOUNT_NAME" = /* ]] && MERGERFS_MOUNT_POINT=$(realpath -m "/mnt/$MERGERFS_MOUNT_NAME")
+    echo "RCLONE_MOUNT_POINT:$RCLONE_MOUNT_POINT MERGERFS_MOUNT_POINT:$MERGERFS_MOUNT_POINT, MERGERFS_MOUNT_OPTIONS:${MERGERFS_MOUNT_OPTIONS}"
+    MERGERFS_PARAMS="/storage:${RCLONE_MOUNT_POINT}/${MERGERFS_MOUNT_RCLONE_PATH} ${MERGERFS_MOUNT_POINT} -o ${MERGERFS_MOUNT_OPTIONS}"
+else 
+    MERGERFS_PARAMS=$OVERRIDE_MERGERFS_COMMAND_PARAMTERS
+fi
+
+
+echo "printing out variables..."
+echo "PARAMS_GLOBAL:${PARAMS_GLOBAL}"
+echo "PARAMS_MOUNT:${PARAMS_MOUNT}"
+echo "PARAMS_VFS:${PARAMS_VFS}"
+echo "PARAMS_RC:${PARAMS_RC}"
+echo "MERGERFS_PARAMS:${MERGERFS_PARAMS}"
+set -x
+
+
+umount_mount_points() {
     mount_points="${MERGERFS_MOUNT_POINT} ${RCLONE_MOUNT_POINT}"
     
     for mount in ${mount_points}; do 
         fusermount -uz $mount || :
     done
+}
+
+_term() {
+    echo "Caught SIGTERM signal! unmounting..."
+    umount_mount_points
 }
 
 trap _term SIGTERM
@@ -102,36 +149,75 @@ rclone_config() {
 }
 
 rclone_rcd_refresh() {
-    rclone rc $_rc_auth_ vfs/refresh recursive=true ${_rc_addr_} _async=true
+    rclone rc $rc_auth $rc_addr_param vfs/refresh recursive=true _async=true
 }
 
 rclone_rcd() {
     echo "launching rcd..."
-    rclone rcd --config=${DOCKER_RCLONE_CONFIG_FILE} ${PARAMS_COMMON} ${PARAMS_RC} &
-    sleep 3
-    rclone rc $_rc_auth_ options/set --json $RCLONE_RC_OPTION_SET_JSON
-    rclone rc $_rc_auth_ options/set --json '{"vfs": {"Umask":"'${UMASK}'", "GID":"'$PGID'", "UID":"'${PUID}'"}}'
-    rclone rc $_rc_auth_ mount/mount fs="${RCLONE_REMOTE}:" mountPoint=${RCLONE_MOUNT_POINT} vfsOpt='{"CacheMode": 3}' mountOpt='{"AllowOther": true}'
+    rclone ${config_file_param}  $rc_addr_param  ${PARAMS_GLOBAL} $exclude_file_param rcd $PARAMS_RC &
+
+    sleep 4
+    [ -z $RCLONE_RC_OPTION_SET_JSON ]&&RCLONE_RC_OPTION_SET_JSON=$(cat <<-END
+    {
+        "main":{
+            "Checkers": 6,
+            "Transfers": 6,
+            "BufferSize":16777216,
+            "TrackRenames":true,
+            "TrackRenamesStrategy":"modtime,leaf",
+            "NoUpdateModTime",true,
+            "BufferSize":67108864,
+            "TPSLimitBurst":3,
+            "UserAgent":"rclone_mount",
+            "CutoffMode":"hard",
+            "Progress":true,
+            "UseMmap":true,
+            "HumanReadable":true
+        },
+        "vfs":{
+            "CacheMode":3,
+            "Umask":0,
+            "DirPerms":"0777",
+            "FilePerms":"0777",
+            "CacheMaxSize":322122547200,
+            "CacheMaxAge":3600000000000,
+            "CacheMaxSize":322122547200,
+            "CachePollInterval":300000000000,
+            "ChunkSize":67108864,
+            "ChunkSizeLimit":536870912,
+            "ReadAhead":67108864,
+            "NoModTime":true,
+            "NoChecksum":true,
+            "WriteBack":300000000000,
+            "CaseInsensitive":true,
+            "ReadAhead":2147483648
+        },
+        "mount":{
+            "AllowNonEmpty":true,
+            "AllowOther":true,
+            "AsyncRead":true,
+            "WritebackCache":true
+        }
+    }
+END
+)
+    rclone rc $rc_auth $rc_addr_param options/set --json $RCLONE_RC_OPTION_SET_JSON
+    rclone rc $rc_auth $rc_addr_param options/set --json '{"vfs": {"Umask":'${UMASK}', "GID":'$PGID', "UID":'${PUID}'}}'
+    rclone rc $rc_auth $rc_addr_param mount/mount fs="${RCLONE_REMOTE}:" mountPoint=${RCLONE_MOUNT_POINT} vfsOpt='{"CacheMode": 3}' mountOpt='{"AllowOther": true}'
 }
 
 rclone_mount() {
     echo "mounting with rc on..."
-    rclone --config=${DOCKER_RCLONE_CONFIG_FILE} ${PARAMS_COMMON}  \
-    mount ${RCLONE_REMOTE}:${RCLONE_REMOTE_PATH} ${RCLONE_MOUNT_POINT}  \
-    ${PARAMS_MOUNT} ${PARAMS_VFS} --rc  ${PARAMS_RC} &
+    rclone ${config_file_param} ${PARAMS_GLOBAL} $exclude_file_param \
+        mount ${RCLONE_REMOTE}:${RCLONE_REMOTE_PATH} ${RCLONE_MOUNT_POINT} ${PARAMS_MOUNT} ${PARAMS_VFS} --rc ${PARAMS_RC} &
 }
 
 mount_mergerfs() {
-    mergerfs /storage:${RCLONE_MOUNT_POINT}/${MERGERFS_MOUNT_RCLONE_PATH} ${MERGERFS_MOUNT_POINT} -o ${MERGERFS_MOUNT_OPTIONS}
+    mergerfs ${MERGERFS_PARAMS}
 }
 
-
-[[ -z "$RCLONE_REMOTE" ]] && { 
-    echo "RCLONE_REMOTE is not set, aborting..."
-    exit 1 
-}
-
-_term # clean up mount points before we start
+# clean up mount points before we start
+umount_mount_points 
 
 rclone_config
 [[ $? = 0 ]] || {
@@ -141,9 +227,7 @@ rclone_config
 
 mkdir -p ${RCLONE_MOUNT_POINT} ${MERGERFS_MOUNT_POINT}
 if [[ ${USE_RCD} == true ]]; then rclone_rcd; else rclone_mount; fi
-
 mount_mergerfs
-
 sleep 3
 rclone_rcd_refresh
 
