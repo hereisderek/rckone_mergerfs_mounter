@@ -154,54 +154,57 @@ rclone_rcd_refresh() {
 
 rclone_rcd() {
     echo "launching rcd..."
-    rclone ${config_file_param}  $rc_addr_param  ${PARAMS_GLOBAL} $exclude_file_param rcd $PARAMS_RC &
+    rclone ${config_file_param}  $rc_addr_param  ${PARAMS_GLOBAL} ${PARAMS_VFS} $exclude_file_param rcd $PARAMS_RC &
 
     sleep 4
-    [ -z $RCLONE_RC_OPTION_SET_JSON ]&&RCLONE_RC_OPTION_SET_JSON=$(cat <<-END
-    {
-        "main":{
-            "Checkers": 6,
-            "Transfers": 6,
-            "BufferSize":16777216,
-            "TrackRenames":true,
-            "TrackRenamesStrategy":"modtime,leaf",
-            "NoUpdateModTime",true,
-            "BufferSize":67108864,
-            "TPSLimitBurst":3,
-            "UserAgent":"rclone_mount",
-            "CutoffMode":"hard",
-            "Progress":true,
-            "UseMmap":true,
-            "HumanReadable":true
-        },
-        "vfs":{
-            "CacheMode":3,
-            "Umask":0,
-            "DirPerms":"0777",
-            "FilePerms":"0777",
-            "CacheMaxSize":322122547200,
-            "CacheMaxAge":3600000000000,
-            "CacheMaxSize":322122547200,
-            "CachePollInterval":300000000000,
-            "ChunkSize":67108864,
-            "ChunkSizeLimit":536870912,
-            "ReadAhead":67108864,
-            "NoModTime":true,
-            "NoChecksum":true,
-            "WriteBack":300000000000,
-            "CaseInsensitive":true,
-            "ReadAhead":2147483648
-        },
-        "mount":{
-            "AllowNonEmpty":true,
-            "AllowOther":true,
-            "AsyncRead":true,
-            "WritebackCache":true
-        }
+    
+    
+    if [ ! -z $RCLONE_RC_OPTION_SET_JSON ]; then rclone rc $rc_auth $rc_addr_param options/set --json $RCLONE_RC_OPTION_SET_JSON; 
+    else 
+        rclone rc $rc_auth $rc_addr_param options/set --json \
+'{
+    "main":{
+        "Checkers": 6,
+        "Transfers": 6,
+        "BufferSize":16777216,
+        "TrackRenames":true,
+        "TrackRenamesStrategy":"modtime,leaf",
+        "NoUpdateModTime":true,
+        "BufferSize":67108864,
+        "TPSLimitBurst":3,
+        "UserAgent":"rclone_mount",
+        "CutoffMode":"hard",
+        "Progress":true,
+        "UseMmap":true,
+        "HumanReadable":true
+    },
+    "vfs":{
+        "CacheMode":3,
+        "Umask":0,
+        "DirPerms": 777,
+        "FilePerms": 777,
+        "CacheMaxSize":322122547200,
+        "CacheMaxAge":3600000000000,
+        "CacheMaxSize":322122547200,
+        "CachePollInterval":300000000000,
+        "ChunkSize":67108864,
+        "ChunkSizeLimit":536870912,
+        "ReadAhead":67108864,
+        "NoModTime":true,
+        "NoChecksum":true,
+        "WriteBack":300000000000,
+        "CaseInsensitive":true,
+        "ReadAhead":2147483648
+    },
+    "mount":{
+        "AllowNonEmpty":true,
+        "AllowOther":true,
+        "AsyncRead":true,
+        "WritebackCache":true
     }
-END
-)
-    rclone rc $rc_auth $rc_addr_param options/set --json $RCLONE_RC_OPTION_SET_JSON
+}' 
+    fi
+
     rclone rc $rc_auth $rc_addr_param options/set --json '{"vfs": {"Umask":'${UMASK}', "GID":'$PGID', "UID":'${PUID}'}}'
     rclone rc $rc_auth $rc_addr_param mount/mount fs="${RCLONE_REMOTE}:" mountPoint=${RCLONE_MOUNT_POINT} vfsOpt='{"CacheMode": 3}' mountOpt='{"AllowOther": true}'
 }
@@ -232,3 +235,5 @@ sleep 3
 rclone_rcd_refresh
 
 wait
+
+
