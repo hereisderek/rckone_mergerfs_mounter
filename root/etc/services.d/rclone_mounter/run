@@ -56,7 +56,7 @@ if [ -z $OVERRIDE_RCLONE_GLOBAL_PARAMS ]; then
     # --checkers 8 --drive-pacer-min-sleep 50ms --drive-pacer-burst 200
     # https://github.com/animosity22/homescripts/blob/master/systemd/rclone-drive.service
     PARAMS_GLOBAL="--use-mmap --user-agent rclone_mounte --tpslimit-burst 3 --size-only --no-update-modtime \
---drive-stop-on-download-limit  --drive-stop-on-upload-limit --drive-acknowledge-abuse --temp-dir /cache \
+--drive-stop-on-download-limit  --drive-stop-on-upload-limit --drive-acknowledge-abuse --cache-dir /cache --temp-dir /cache/tmp \
 --track-renames --track-renames-strategy modtime,leaf --buffer-size=64M --progress --human-readable \
 ${exclude_file_param} ${RCLONE_GLOBAL_PARAMS_EXTRA}"
 else 
@@ -80,7 +80,7 @@ fi
 
 PARAMS_VFS=
 if [ -z ${OVERRIDE_RCLONE_VFS_PARAMS} ]; then
-    PARAMS_VFS=" --cache-dir /cache --vfs-cache-mode full  --vfs-case-insensitive=true \
+    PARAMS_VFS="--vfs-cache-mode full  --vfs-case-insensitive=true \
 --vfs-cache-mode full --vfs-read-chunk-size 64M --vfs-read-chunk-size-limit 512M \
 --vfs-cache-max-size 300G --vfs-cache-poll-interval 5m --vfs-read-ahead 2G --attr-timeout 20s --transfers 6 ${RCLONE_VFS_PARAMS_EXTRA}"
 else
@@ -154,7 +154,7 @@ rclone_rcd_refresh() {
 
 rclone_rcd() {
     echo "launching rcd..."
-    rclone ${config_file_param}  $rc_addr_param  ${PARAMS_GLOBAL} ${PARAMS_VFS} $exclude_file_param rcd $PARAMS_RC &
+    rclone ${config_file_param}  $rc_addr_param  ${PARAMS_GLOBAL} $exclude_file_param rcd $PARAMS_RC &
 
     sleep 4
     
@@ -228,7 +228,7 @@ rclone_config
     exit 1
 }
 
-mkdir -p ${RCLONE_MOUNT_POINT} ${MERGERFS_MOUNT_POINT}
+mkdir -p ${RCLONE_MOUNT_POINT} ${MERGERFS_MOUNT_POINT} /cache/tmp
 if [[ ${USE_RCD} == true ]]; then rclone_rcd; else rclone_mount; fi
 mount_mergerfs
 sleep 3
