@@ -1,0 +1,39 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "bashdb",
+            "request": "launch",
+            "name": "Bash-Debug run",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RCLONE_REMOTE":"share_01",
+                "RCLONE_CONFIG_DIR":"~/.config/rclone",
+                "RCLONE_CONFIG_FILE_NAME":"rclone.conf", 
+                "RCLONE_EXCLUDE_FILE_NAME":"exclude.txt",
+                "RC_WEB_GUI":false,
+                "RC_SERVE":false,
+                "RC_ENABLE_METRICS":false,
+                "RC_ADDR":":5572", 
+                "RC_AUTH":"--rc-no-auth", 
+                "LOCAL_CACHE_TYPE":"union",
+                "MERGERFS_MOUNT_OPTIONS":"rw,use_ino,cache.files=partial,dropcacheonclose=true,allow_other,func.getattr=newest,category.action=all,category.create=ff,cache.files=auto-full,nonempty", 
+                "_docker_cache":"/tmp/rclone",
+                "_docker_mount_root":"/Volumes/shared/Workspace/Volumes/rclone"
+                
+            },
+            "program": "${workspaceFolder}/root/etc/services.d/rclone_mounter/run",
+            "args": []
+        },
+
+        {
+            "type": "bashdb",
+            "request": "launch",
+            "name": "Bash-Debug (simplest configuration)",
+            "program": "${file}"
+        }
+    ]
+}

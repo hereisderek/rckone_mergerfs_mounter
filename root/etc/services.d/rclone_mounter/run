@@ -1,18 +1,33 @@
+#!/usr/bin/env bash
 #!/usr/bin/with-contenv bash
+
+
 echo "=============================== ENV ==============================="
 env
 echo "******************************* ENV *******************************"
 
-set +e
+set +ex
 
 [[ -z "$RCLONE_REMOTE" ]] && { 
     echo "RCLONE_REMOTE is not set, aborting..."
     exit 1 
 }
 
+echoerr() { echo "$@" 1>&2; }
+
 UMASK=${UMASK:-0};PGID=${PGID:-0};PUID=${PUID:-0}
 RCLONE_EXCLUDE_FILE_NAME=${RCLONE_EXCLUDE_FILE_NAME:-exclude.txt}
 RCLONE_IP_PORT=${RCLONE_IP_PORT:-"localhost:5572"}
+RCLONE_CONFIG_DIR=${RCLONE_CONFIG_DIR:-"/config"}
+
+_docker_cache=${_docker_cache:-"/cache"}
+_docker_mount_root=${_docker_mount_root:-"/mnt"}
+# XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-"/config"}
+
+STAGE_0_ENV_SUFFIX="stage0" # ran after initialization, pre mount
+STAGE_1_ENV_SUFFIX="stage1" # post mount pre mergerfs
+STAGE_2_ENV_SUFFIX="stage2" # post mergerfs pre refreshing
+STAGE_3_ENV_SUFFIX="stage3" # final stage, post refreshing
 
 IS_INTERACTIVE=0; [[ -t 0 && -t 1 ]] && IS_INTERACTIVE=1
 
@@ -56,7 +71,7 @@ if [ -z $OVERRIDE_RCLONE_GLOBAL_PARAMS ]; then
     # --checkers 8 --drive-pacer-min-sleep 50ms --drive-pacer-burst 200
     # https://github.com/animosity22/homescripts/blob/master/systemd/rclone-drive.service
     PARAMS_GLOBAL="--use-mmap --user-agent rclone_mounte --tpslimit-burst 3 --size-only --no-update-modtime \
---drive-stop-on-download-limit  --drive-stop-on-upload-limit --drive-acknowledge-abuse --cache-dir /cache --temp-dir /cache/tmp \
+--drive-stop-on-download-limit  --drive-stop-on-upload-limit --drive-acknowledge-abuse --cache-dir ${_docker_cache} --temp-dir ${_docker_cache}/tmp \
 --track-renames --track-renames-strategy modtime,leaf --buffer-size=64M --progress --human-readable \
 ${exclude_file_param} ${RCLONE_GLOBAL_PARAMS_EXTRA}"
 else 
@@ -90,11 +105,12 @@ fi
 
 MERGERFS_PARAMS=
 if [ -z $OVERRIDE_MERGERFS_COMMAND_PARAMTERS ]; then
-    [[ -z ${RCLONE_MOUNT_NAME} ]]&&RCLONE_MOUNT_NAME=${RCLONE_REMOTE}
-    [[ -z ${MERGERFS_MOUNT_NAME} ]]&&MERGERFS_MOUNT_NAME="${RCLONE_MOUNT_NAME}_merged"
+    RCLONE_MOUNT_NAME=${RCLONE_MOUNT_NAME:-${RCLONE_REMOTE}}
+    MERGERFS_MOUNT_NAME=${MERGERFS_MOUNT_NAME:-"${RCLONE_MOUNT_NAME}_merged"}
+    echo "RCLONE_MOUNT_NAME:$RCLONE_MOUNT_NAME MERGERFS_MOUNT_NAME:$MERGERFS_MOUNT_NAME"
 
-    RCLONE_MOUNT_POINT=$RCLONE_MOUNT_NAME; [[ ! "$RCLONE_MOUNT_NAME" = /* ]] && RCLONE_MOUNT_POINT=$(realpath -m "/mnt/$RCLONE_MOUNT_NAME")
-    MERGERFS_MOUNT_POINT=$MERGERFS_MOUNT_NAME; [[ ! "$MERGERFS_MOUNT_NAME" = /* ]] && MERGERFS_MOUNT_POINT=$(realpath -m "/mnt/$MERGERFS_MOUNT_NAME")
+    RCLONE_MOUNT_POINT=$RCLONE_MOUNT_NAME; [[ ! "$RCLONE_MOUNT_NAME" = /* ]] && RCLONE_MOUNT_POINT=$(realpath -m "${_docker_mount_root}/$RCLONE_MOUNT_NAME")
+    MERGERFS_MOUNT_POINT=$MERGERFS_MOUNT_NAME; [[ ! "$MERGERFS_MOUNT_NAME" = /* ]] && MERGERFS_MOUNT_POINT=$(realpath -m "${_docker_mount_root}/$MERGERFS_MOUNT_NAME")
     echo "RCLONE_MOUNT_POINT:$RCLONE_MOUNT_POINT MERGERFS_MOUNT_POINT:$MERGERFS_MOUNT_POINT, MERGERFS_MOUNT_OPTIONS:${MERGERFS_MOUNT_OPTIONS}"
     MERGERFS_PARAMS="/storage:${RCLONE_MOUNT_POINT}/${MERGERFS_MOUNT_RCLONE_PATH} ${MERGERFS_MOUNT_POINT} -o ${MERGERFS_MOUNT_OPTIONS}"
 else 
@@ -108,15 +124,15 @@ echo "PARAMS_MOUNT:${PARAMS_MOUNT}"
 echo "PARAMS_VFS:${PARAMS_VFS}"
 echo "PARAMS_RC:${PARAMS_RC}"
 echo "MERGERFS_PARAMS:${MERGERFS_PARAMS}"
-set -x
+# set -x
 
 
 umount_mount_points() {
     mount_points="${MERGERFS_MOUNT_POINT} ${RCLONE_MOUNT_POINT}"
-    
-    for mount in ${mount_points}; do 
-        fusermount -uz $mount || :
-    done
+    echo "umounting mount points:${mount_points}"
+    # for mount in ${mount_points}; do 
+    #     fusermount -uz $mount || :
+    # done
 }
 
 _term() {
@@ -180,8 +196,8 @@ rclone_rcd() {
     "vfs":{
         "CacheMode":3,
         "Umask":0,
-        "DirPerms": 777,
-        "FilePerms": 777,
+        "DirPerms": 511,
+        "FilePerms": 511,
         "CacheMaxSize":322122547200,
         "CacheMaxAge":3600000000000,
         "CacheMaxSize":322122547200,
@@ -204,9 +220,9 @@ rclone_rcd() {
 }' 
     fi
 
-    # rclone rc $rc_auth $rc_addr_param options/set --json '{"vfs": {"Umask":'${UMASK}', "GID":'$PGID', "UID":'${PUID}'}}'
-    rclone rc $rc_auth $rc_addr_param options/set --json '{"vfs": {"GID":'$PGID', "UID":'${PUID}'}}'
-    rclone rc $rc_auth $rc_addr_param mount/mount fs="${RCLONE_REMOTE}:" mountPoint=${RCLONE_MOUNT_POINT} vfsOpt='{"CacheMode": 3,"DirPerms": 777,"FilePerms": 777}' mountOpt='{"AllowOther": true}'
+    rclone rc $rc_auth $rc_addr_param options/set --json '{"vfs": {"Umask":'${UMASK}', "GID":'$PGID', "UID":'${PUID}'}}'
+
+    rclone rc $rc_auth $rc_addr_param mount/mount fs="${RCLONE_REMOTE}:" mountPoint=${RCLONE_MOUNT_POINT} vfsOpt='{"CacheMode": 3}' mountOpt='{"AllowOther": true}'
 }
 
 rclone_mount() {
@@ -216,7 +232,43 @@ rclone_mount() {
 }
 
 mount_mergerfs() {
-    mergerfs ${MERGERFS_PARAMS}
+    eval_command_as mergerfs ${MERGERFS_PARAMS}
+}
+
+mount_union(){
+    echo "mount_union"
+}
+
+eval_command_as() {
+    # s6-setuidgid abc $@
+    eval $@
+}
+
+run_stage_command() {
+    local stage_prefix=$1
+    eval 'local vars=${!'"$stage_prefix"'@}'
+    # echo "evaluating env variable with prefix ${stage_prefix}, commands:${vars} ..."
+    for i in $vars; do
+        echo "ececuting $stage_prefix command ${!i} ..."
+        eval ${!i}
+    done
+}
+
+mount_local_cache() {
+    case "$LOCAL_CACHE_TYPE" in
+        mergerfs) 
+            echo "mount_local_cache with mergerfs..."
+            mount_mergerfs
+            ;;
+        case)
+            echo "mount_local_cache with union..."
+            mount_union
+            ;;
+        *)
+            echoerr "mount_local_cache with unrecognized option(${LOCAL_CACHE_TYPE}), skipping local cache mount..."
+            return 1
+            ;;
+    esac
 }
 
 # clean up mount points before we start
@@ -228,12 +280,17 @@ rclone_config
     exit 1
 }
 
-mkdir -p ${RCLONE_MOUNT_POINT} ${MERGERFS_MOUNT_POINT} /cache/tmp
+mkdir -p ${RCLONE_MOUNT_POINT} ${MERGERFS_MOUNT_POINT} ${_docker_cache}/tmp
+
+run_stage_command $STAGE_0_ENV_SUFFIX
 if [[ ${USE_RCD} == true ]]; then rclone_rcd; else rclone_mount; fi
-mount_mergerfs
+run_stage_command $STAGE_1_ENV_SUFFIX
+
+
+
+mount_local_cache
+run_stage_command $STAGE_2_ENV_SUFFIX
 sleep 3
 rclone_rcd_refresh
-
+run_stage_command $STAGE_3_ENV_SUFFIX
 wait
-
-

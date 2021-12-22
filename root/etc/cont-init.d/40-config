@@ -1,0 +1,9 @@
+#!/usr/bin/with-contenv sh
+
+# create empty config file
+touch /config/.rclone.conf
+
+# permissions
+chown -R abc:abc \
+	/config/.rclone.conf \
+	/root

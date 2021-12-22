@@ -5,7 +5,7 @@ mount your rclone drive and back it with a local cache via mergerfs.
 
 mergerfs paramters used by default is 
 ```
-MERGERFS_MOUNT_OPTIONS="rw,use_ino,cache.files=partial,dropcacheonclose=true,allow_other,func.getattr=newest,category.action=all,category.create=ff,cache.files=auto-full"
+MERGERFS_MOUNT_OPTIONS="rw,use_ino,cache.files=partial,dropcacheonclose=true,allow_other,func.getattr=newest,category.action=all,category.create=ff,cache.files=auto-full,nonempty"
 ``` 
 which can be overwriten by the docker env variable: `MERGERFS_MOUNT_OPTIONS`
 
